@@ -16,9 +16,29 @@ android {
         versionName = "1.0"
     }
 
+    // Assinatura fixa vinda dos segredos do GitHub (KEYSTORE_B64 / KEYSTORE_PASSWORD).
+    // Com a mesma chave em todo build, a versão nova instala POR CIMA da antiga sem apagar dados.
+    val ksPath = System.getenv("KEYSTORE_FILE")
+    val ksPass = System.getenv("KEYSTORE_PASSWORD")
+    val temChave = !ksPath.isNullOrBlank() && !ksPass.isNullOrBlank() && file(ksPath).exists()
+    if (temChave) {
+        signingConfigs {
+            create("fixa") {
+                storeFile = file(ksPath!!)
+                storePassword = ksPass
+                keyAlias = "compras"
+                keyPassword = ksPass
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (temChave) signingConfig = signingConfigs.getByName("fixa")
+        }
         release {
             isMinifyEnabled = false
+            if (temChave) signingConfig = signingConfigs.getByName("fixa")
         }
     }
     compileOptions {
