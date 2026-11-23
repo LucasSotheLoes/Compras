@@ -58,7 +58,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun CompareScreen(store: Store, nav: Nav) {
-    var onlyMulti by rememberSaveable { mutableStateOf(true) }
+    var onlyMulti by rememberSaveable { mutableStateOf(false) }
     var q by rememberSaveable { mutableStateOf("") }
     val data = store.items
         .map { it to store.latestPerSupplier(it.id, true) }
@@ -123,60 +123,162 @@ fun RestockScreen(store: Store) {
     var tab by rememberSaveable { mutableStateOf(0) }
     Column(Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Pedido sugerido") })
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Lista de compras") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Contagem") })
         }
         if (tab == 0) OrderSuggestion(store) else CountScreen(store)
     }
 }
 
-private data class OrderLine(val item: Item, val qty: Double, val offer: PriceEntry?)
+private data class OrderLine(val item: Item, val qty: Double, val offer: PriceEntry?, val manual: Boolean)
 
 @Composable
 private fun OrderSuggestion(store: Store) {
     val ctx = LocalContext.current
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<Item?>(null) }
+
+    // Lista = o que você colocou à mão + o que chegou no mínimo pelo estoque estimado
     val lines = store.items.mapNotNull { item ->
-        val s = store.stockInfo(item)
-        if (s.sugerido > 0) OrderLine(item, s.sugerido, store.bestOffer(item.id)) else null
-    }
+        val auto = store.stockInfo(item).sugerido
+        when {
+            item.wanted > 0 -> OrderLine(item, item.wanted, store.bestOffer(item.id), manual = true)
+            auto > 0 -> OrderLine(item, auto, store.bestOffer(item.id), manual = false)
+            else -> null
+        }
+    }.sortedBy { it.item.name.lowercase() }
     val groups = lines.groupBy { it.offer?.supplierId }
-    val semConfig = store.items.count { it.minStock <= 0 || it.lastCount == null }
+        .entries.sortedBy { store.supplier(it.key)?.name?.lowercase() ?: "~" }
+    val nuncaContados = store.items.filter { it.minStock > 0 && it.lastCount == null && it.wanted <= 0 }
+    val semMinimo = store.items.count { it.minStock <= 0 && it.wanted <= 0 }
 
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Text(
-                if (lines.isEmpty()) "Nada para repor agora pelo estoque estimado."
-                else "${lines.size} itens chegaram no estoque mínimo. Agrupados pelo fornecedor mais barato.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (semConfig > 0) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = { adding = true }, modifier = Modifier.fillMaxWidth()) { Text("+ Adicionar item à lista de compras") }
                 Text(
-                    "$semConfig itens sem estoque mínimo ou sem contagem não entram na sugestão (use a aba Contagem).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (lines.isEmpty()) "Lista vazia. Adicione o que precisa comprar, ou defina mínimo e faça a contagem para o app sugerir sozinho."
+                    else "${lines.size} itens, agrupados pelo fornecedor mais barato. Toque num item para mudar a quantidade ou tirar da lista.",
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+                if (nuncaContados.isNotEmpty()) {
+                    Text(
+                        "⚠ ${nuncaContados.size} itens têm mínimo mas nunca foram contados, então o app não sabe se faltam: " +
+                            nuncaContados.take(6).joinToString { it.name } + (if (nuncaContados.size > 6) "…" else "") +
+                            ". Conte na aba Contagem.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Up,
+                    )
+                }
+                if (semMinimo > 0) {
+                    Text(
+                        "$semMinimo itens sem estoque mínimo só entram se você adicionar à mão.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
-        items(groups.entries.toList(), key = { it.key ?: "none" }) { (sid, ls) ->
+        items(groups, key = { it.key ?: "none" }) { (sid, ls) ->
             val sup = store.supplier(sid)
             val total = ls.sumOf { (it.offer?.effectiveCost ?: 0.0) * it.qty }
+            var confirmDone by remember(sid) { mutableStateOf(false) }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     Text(sup?.name ?: "Sem preço registrado", style = MaterialTheme.typography.titleSmall)
                     ls.forEach { l ->
-                        Text(
-                            "${qtyFmt(l.qty)} ${l.item.unit}  ${l.item.name}" +
-                                (l.offer?.let { "  · ${money(it.effectiveCost)}" } ?: ""),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { editing = l.item }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${qtyFmt(l.qty)} ${l.item.unit}  ${l.item.name}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                (l.offer?.let { money(it.effectiveCost) + "  " } ?: "") + if (l.manual) "" else "auto",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     if (total > 0) Text("Estimado: ${money(total)}", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = { sendOrder(ctx, sup, ls) }) { Text("Enviar pedido no WhatsApp") }
+                    Row {
+                        Button(onClick = { sendOrder(ctx, sup, ls) }) { Text("Enviar no WhatsApp") }
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(onClick = { confirmDone = true }) { Text("Já pedi") }
+                    }
                 }
+            }
+            if (confirmDone) {
+                AlertDialog(
+                    onDismissRequest = { confirmDone = false },
+                    title = { Text("Tirar estes itens da lista?") },
+                    text = {
+                        Text(
+                            "Os itens adicionados à mão saem da lista. Os sugeridos pelo estoque (\"auto\") saem sozinhos " +
+                                "quando você importar a nota da compra ou fizer uma nova contagem."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmDone = false
+                            store.upsertItems(ls.filter { it.manual }.map { it.item.copy(wanted = 0.0) })
+                        }) { Text("Tirar") }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmDone = false }) { Text("Cancelar") } },
+                )
             }
         }
     }
+
+    if (adding) {
+        ItemPickerDialog(store, initial = "", onDismiss = { adding = false }, onPick = { id ->
+            adding = false
+            editing = store.item(id)
+        })
+    }
+    editing?.let { item ->
+        val auto = store.stockInfo(item).sugerido
+        WantedDialog(item, initialQty = if (item.wanted > 0) item.wanted else auto, onDismiss = { editing = null }) { q ->
+            store.upsertItem(item.copy(wanted = q))
+            editing = null
+        }
+    }
+}
+
+/** Define quanto comprar de um item; 0 tira da lista. */
+@Composable
+fun WantedDialog(item: Item, initialQty: Double, onDismiss: () -> Unit, onSave: (Double) -> Unit) {
+    var q by remember(item.id) { mutableStateOf(if (initialQty > 0) qtyFmt(initialQty) else "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(item.name) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumField("Quantidade a comprar (${item.unit})", q, { q = it }, Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1.0, 5.0, 10.0, 50.0).forEach { inc ->
+                        OutlinedButton(onClick = { q = qtyFmt((parseBr(q) ?: 0.0) + inc) }) { Text("+${qtyFmt(inc)}") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = (parseBr(q) ?: 0.0) > 0, onClick = { onSave(parseBr(q) ?: 0.0) }) { Text("Colocar na lista") }
+        },
+        dismissButton = {
+            Row {
+                if (item.wanted > 0) TextButton(onClick = { onSave(0.0) }) { Text("Tirar da lista") }
+                TextButton(onClick = onDismiss) { Text("Cancelar") }
+            }
+        },
+    )
 }
 
 private fun sendOrder(ctx: Context, sup: Supplier?, ls: List<OrderLine>) {

@@ -28,6 +28,8 @@ data class Item(
     val maxStock: Double = 0.0,
     val lastCount: Double? = null,
     val lastCountDate: Long? = null,
+    /** Quantidade colocada à mão na lista de compras (0 = não está na lista). */
+    val wanted: Double = 0.0,
 )
 
 enum class Source { NF, COTACAO }
@@ -88,6 +90,7 @@ fun Item.toJson(): JSONObject = JSONObject()
     .put("minStock", minStock).put("maxStock", maxStock)
     .put("lastCount", lastCount ?: JSONObject.NULL)
     .put("lastCountDate", lastCountDate ?: JSONObject.NULL)
+    .put("wanted", wanted)
 
 fun itemFromJson(o: JSONObject) = Item(
     id = o.getString("id"),
@@ -99,6 +102,7 @@ fun itemFromJson(o: JSONObject) = Item(
     maxStock = o.optDouble("maxStock", 0.0),
     lastCount = o.optDoubleOrNull("lastCount"),
     lastCountDate = o.optLongOrNull("lastCountDate"),
+    wanted = o.optDouble("wanted", 0.0),
 )
 
 fun PriceEntry.toJson(): JSONObject = JSONObject()

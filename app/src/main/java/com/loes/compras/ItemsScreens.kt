@@ -117,6 +117,7 @@ fun ItemDetailScreen(store: Store, nav: Nav, id: String) {
     }
     var confirmDelete by remember { mutableStateOf(false) }
     var manual by remember { mutableStateOf(false) }
+    var wantedDlg by remember { mutableStateOf(false) }
     val history = store.prices.filter { it.itemId == id }.sortedBy { it.date }
     val ranking = store.latestPerSupplier(id, false)
     val stock = store.stockInfo(item)
@@ -160,6 +161,9 @@ fun ItemDetailScreen(store: Store, nav: Nav, id: String) {
             }
             OutlinedButton(onClick = { manual = true }, modifier = Modifier.padding(horizontal = 16.dp)) {
                 Text("Lançar preço manual")
+            }
+            Button(onClick = { wantedDlg = true }, modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text(if (item.wanted > 0) "Na lista de compras: ${qtyFmt(item.wanted)} ${item.unit}" else "+ Lista de compras")
             }
 
             if (history.size >= 2) {
@@ -225,6 +229,12 @@ fun ItemDetailScreen(store: Store, nav: Nav, id: String) {
         )
     }
     if (manual) ManualPriceDialog(store, item) { manual = false }
+    if (wantedDlg) {
+        WantedDialog(item, initialQty = if (item.wanted > 0) item.wanted else stock.sugerido, onDismiss = { wantedDlg = false }) { q ->
+            store.upsertItem(item.copy(wanted = q))
+            wantedDlg = false
+        }
+    }
 }
 
 @Composable
