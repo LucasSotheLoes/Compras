@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Casa -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 L82,52 L75,52 L75,78 L33,78 L33,52 L26,52 Z" />
+    <!-- Porta -->
+    <path
+        android:fillColor="#E65100"
+        android:pathData="M48,60 L60,60 L60,78 L48,78 Z" />
+    <!-- Seta de preço caindo -->
+    <path
+        android:fillColor="#E65100"
+        android:pathData="M38,50 L44,50 L44,44 L38,44 Z M64,44 L70,44 L70,50 L64,50 Z" />
+</vector>
