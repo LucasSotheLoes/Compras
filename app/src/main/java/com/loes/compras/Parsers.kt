@@ -80,11 +80,13 @@ data class QuoteLine(val raw: String, val desc: String, val price: Double)
 // "[22/11/2026 14:03] Fulano: " ou "22/11/2026 14:03 - Fulano: "
 private val waPrefix = Regex("""^\[?\d{1,2}/\d{1,2}(/\d{2,4})?,?\s+\d{1,2}:\d{2}(:\d{2})?]?\s*(-\s*)?[^:]{1,40}:\s*""")
 private val priceRe = Regex("""(?<![\d.,])(\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2}|\d+\.\d{2})(?![\d.,])""")
-private val unitWords = Regex("""(?i)\b(cada|unit[aá]rio|unid\.?|und\.?|un\.?|p[cç]\.?|o\s+metro|o\s+m)(?=\s|$)""")
+private val unitWords = Regex("""(?iu)\b(cada|unit[aá]rio|unid\.?|und\.?|un\.?|p[cç]\.?|o\s+metro|o\s+m)(?=\s|$)""")
 
 fun parseQuote(text: String): List<QuoteLine> = text.lines().mapNotNull { line0 ->
     val line = line0.replace(waPrefix, "").trim()
     if (line.isEmpty()) return@mapNotNull null
+    // Linha de tabela (orçamento colado): "9214 REG. GAVETA 3/4" PC 5,00 41,000 0,0 205,000"
+    tableLine(line)?.let { t -> return@mapNotNull QuoteLine(line, t.desc, t.vUnit) }
     val m = priceRe.findAll(line).lastOrNull() ?: return@mapNotNull null
     val price = parseBr(m.value) ?: return@mapNotNull null
     if (price <= 0) return@mapNotNull null
@@ -113,6 +115,12 @@ data class NfParsed(
     val data: Long?,
     val lines: List<NfLine>,
     val rawText: String,
+    /** true = orçamento/pedido do fornecedor (vira cotação, não compra). */
+    val isQuote: Boolean = false,
+    /** Identifica o fornecedor no documento: CNPJ, ou telefone+vendedor quando não há CNPJ. */
+    val docKey: String? = null,
+    /** Prazo de pagamento lido do documento (ex.: "BLOQUETO 28", "28/56 DDL" → média). */
+    val prazo: Int? = null,
 )
 
 fun readPdfText(ctx: Context, uri: Uri): String {
@@ -156,6 +164,83 @@ private fun pickValues(n: List<Double>): List<Double>? {
             val ipi = if (rest.size >= 5) rest[2] else 0.0
             return listOf(q, vu, vt, ipi)
         }
+    }
+    return null
+}
+
+/**
+ * Linha de tabela genérica (orçamentos e pedidos de ERP). Exemplos reais:
+ *   9214 REG. GAVETA DOCOL BASE 3/4" PC 5,00 41,000 0,0 205,000
+ *   968276 90251306000 REGISTRO GAVETA 3/4" - DOCOL DOCOL 84818093 UN 0,00% R$ 0,00 0,00% R$ 0,00 5 R$ 37,90 R$ 189,50
+ * Pega a sequência de números no fim da linha e procura qtd × unitário ≈ total.
+ */
+fun tableLine(line0: String): NfLine? {
+    val line = line0.replace("_x000D_", " ").replace("R$", " ").replace("%", " ")
+    val toks = line.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    var i = toks.size
+    while (i > 0 && numTok.matches(toks[i - 1])) i--
+    val nums = toks.subList(i, toks.size).mapNotNull { parseBr(it) }
+    if (nums.size < 3) return null
+    var head = toks.subList(0, i)
+    var unit = "UN"
+    if (head.size >= 2 && Regex("^[A-Za-z]{1,4}\\.?$").matches(head.last())) {
+        unit = head.last().trimEnd('.').uppercase()
+        head = head.dropLast(1)
+    }
+    // Coluna de NCM logo antes da unidade
+    if (head.size >= 2 && Regex("^\\d{4}\\.?\\d{2}\\.?\\d{2}$").matches(head.last())) head = head.dropLast(1)
+    if (head.isEmpty()) return null
+
+    // Total costuma ser a última coluna; qtd e unitário são colunas vizinhas antes dele.
+    for (k in nums.indices.reversed()) {
+        val vt = nums[k]
+        if (vt <= 0) continue
+        val tol = max(0.05, vt * 0.02)
+        for (qi in 0 until k - 1) {
+            val q = nums[qi]
+            val vu = nums[qi + 1]
+            if (q <= 0 || vu <= 0 || abs(q * vu - vt) > tol) continue
+            val before = nums.subList(0, qi)
+            val between = nums.subList(qi + 2, k)
+            var ipi = 0.0
+            if (between.size == 1 && between[0] in 0.0..30.0) {
+                ipi = vt * between[0] / 100.0 // IPI % entre unitário e total
+            } else if (before.size >= 4) {
+                // IPI% IPI R$ ST% ST R$ antes da quantidade: decide se o R$ é por unidade ou da linha
+                fun valor(pct: Double, v: Double) =
+                    if (v <= 0) 0.0 else if (abs(v - vt * pct / 100) <= abs(v - vu * pct / 100)) v else v * q
+                ipi = valor(before[0], before[1]) + valor(before[2], before[3])
+            }
+            val first = head[0]
+            val code = if (head.size >= 2 && first.any { it.isDigit() } && first.length <= 18) first else ""
+            var rest = if (code.isNotEmpty()) head.drop(1) else head
+            // Segundo código (código do fabricante/fornecedor), ex.: 90251306000, CF211, 002375-2
+            if (rest.size >= 2 && rest[0].any { it.isDigit() } && Regex("^[A-Z0-9./\\-]+$").matches(rest[0])) rest = rest.drop(1)
+            val desc = rest.joinToString(" ").trim().trim('-', ' ')
+            if (desc.count { it.isLetter() } < 2) return null
+            return NfLine(code, desc, unit, q, vu, vt, ipi)
+        }
+    }
+    return null
+}
+
+private val prazoRe = Regex("""(?i)(?:bloqueto|boleto|ddl|duplicata|plano)[ \t:\-]{0,5}(\d{1,3}(?:\s*/\s*\d{1,3})*)(?!\d)""")
+private val prazoDiasRe = Regex("""(?i)(?<![\d,.])(\d{1,3}(?:\s*/\s*\d{1,3})*)\s*(?:dias|ddl|dd)\b""")
+private val foneRe = Regex("""(?i)fone\s*:?\s*([\d()\s\-]{8,20})""")
+private val vendRe = Regex("""(?i)vend(?:as|edor)\s*:?\s*(\d+)""")
+private val cnpjLabelRe = Regex("""(?i)cnpj\s*:?\s*(\d{14})(?!\d)""")
+private val orcNumRe = Regex("""(?iu)(?:or[çc]amento|pedido)[ \t]*(?:n[º°o.]*)?[ \t]*:?[ \t]*(\d{3,})""")
+
+private fun parsePrazo(text: String): Int? {
+    // Prefere "BLOQUETO 28" / "BOLETO 28/56"; depois "28/56 DDL" ou "30 dias".
+    // Ignora "válido por 2 dias" (validade do orçamento, não prazo).
+    val candidates = prazoRe.findAll(text).map { it.groupValues[1] } +
+        prazoDiasRe.findAll(text)
+            .filterNot { m -> text.substring(maxOf(0, m.range.first - 12), m.range.first).contains("lido", ignoreCase = true) }
+            .map { it.groupValues[1] }
+    for (c in candidates) {
+        val parts = c.split('/').mapNotNull { it.trim().toIntOrNull() }.filter { it in 7..180 }
+        if (parts.isNotEmpty()) return parts.average().toInt()
     }
     return null
 }
@@ -209,13 +294,20 @@ fun parseDanfe(text: String): NfParsed {
     }
 
     // Chave de acesso (44 dígitos): cUF(2) AAMM(4) CNPJ(14) mod(2) série(3) nNF(9) ...
+    // Sem tabela de DANFE: tenta o layout genérico de orçamento/pedido de ERP
+    val danfeTable = out.isNotEmpty()
+    if (!danfeTable) out += lines.mapNotNull { tableLine(it) }
+
     var cnpj: String? = null
     var numero: String? = null
+    var temChave = false
     chaveRe.findAll(text).map { digits(it.value) }.firstOrNull { it.length == 44 }?.let { chave ->
         cnpj = chave.substring(6, 20)
         numero = chave.substring(25, 34).trimStart('0')
+        temChave = true
     }
     if (cnpj == null) cnpj = cnpjRe.find(text)?.value?.let(::digits)
+        ?: cnpjLabelRe.find(text)?.groupValues?.get(1) // "Cnpj: 00138093000549" (1º = emitente)
 
     val upText = text.uppercase()
     val emissIdx = upText.indexOf("EMISS").coerceAtMost(text.length)
@@ -223,5 +315,16 @@ fun parseDanfe(text: String): NfParsed {
         ?: dateRe.find(text)?.groupValues?.get(1)
     val data = dateStr?.let { runCatching { SimpleDateFormat("dd/MM/yyyy", BR).parse(it)?.time }.getOrNull() }
 
-    return NfParsed(cnpj, numero, data, out, text)
+    val pareceOrcamento = listOf("ORÇAMENTO", "ORCAMENTO", "PEDIDO", "COTAÇÃO", "COTACAO", "PROPOSTA").any { upText.contains(it) }
+    val isQuote = !temChave && (pareceOrcamento || !danfeTable)
+    if (isQuote) orcNumRe.find(text)?.let { numero = it.groupValues[1] }
+
+    // Sem CNPJ no documento: identifica o fornecedor pelo telefone + código do vendedor
+    val docKey = cnpj ?: run {
+        val fone = foneRe.find(text)?.groupValues?.get(1)?.let(::digits)?.takeIf { it.length >= 8 }
+        val vend = vendRe.find(text)?.groupValues?.get(1)
+        if (fone == null && vend == null) null else "doc:${fone ?: ""}:${vend ?: ""}"
+    }
+
+    return NfParsed(cnpj, numero, data, out, text, isQuote = isQuote, docKey = docKey, prazo = parsePrazo(text))
 }

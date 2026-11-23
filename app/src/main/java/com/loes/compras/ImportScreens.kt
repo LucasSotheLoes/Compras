@@ -212,10 +212,13 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
             val text = withContext(Dispatchers.IO) { readPdfText(ctx, uri) }
             val nf = parseDanfe(text)
             parsed = nf
-            val sup = nf.cnpjEmitente?.let { c -> store.suppliers.firstOrNull { digits(it.cnpj) == c && c.isNotEmpty() } }
+            val sup = store.suppliers.firstOrNull { s ->
+                (nf.cnpjEmitente != null && digits(s.cnpj) == nf.cnpjEmitente) ||
+                    (nf.docKey != null && nf.docKey in s.docKeys)
+            }
             supplierId = sup?.id
-            if (sup != null) prazo = sup.prazoPadrao.toString()
-            val key = nf.cnpjEmitente ?: sup?.id ?: ""
+            (nf.prazo ?: sup?.prazoPadrao)?.let { prazo = it.toString() }
+            val key = nf.docKey ?: sup?.id ?: ""
             rows = nf.lines.map { l ->
                 val byCode = if (key.isNotEmpty()) store.items.firstOrNull { codeKey(key, l.code) in it.codes } else null
                 NRow(l, (byCode ?: store.matchItem(l.desc))?.id)
@@ -227,7 +230,8 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
     }
 
     val nf = parsed
-    val already = nf?.numero?.let { n -> store.prices.any { it.note == "NF $n" && (supplierId == null || it.supplierId == supplierId) } } ?: false
+    val docLabel = if (nf?.isQuote == true) "Orç." else "NF"
+    val already = nf?.numero?.let { n -> store.prices.any { it.note == "$docLabel $n" && (supplierId == null || it.supplierId == supplierId) } } ?: false
 
     // Rateio de frete/ST/desconto da nota proporcional ao valor de cada item
     val included = rows.filter { it.include }
@@ -242,7 +246,11 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
     }
 
     SubScreen(
-        title = if (nf?.numero != null) "NF ${nf.numero}" else "Importar nota",
+        title = when {
+            nf == null -> "Importar PDF"
+            nf.numero != null -> "${if (nf.isQuote) "Orçamento" else "NF"} ${nf.numero}"
+            else -> if (nf.isQuote) "Orçamento" else "Nota fiscal"
+        },
         onBack = { nav.pop() },
         bottomBar = {
             if (nf != null && rows.isNotEmpty()) Surface(tonalElevation = 3.dp) {
@@ -252,7 +260,7 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
                         val sid = supplierId!!
                         val date = nf.data ?: System.currentTimeMillis()
                         val pz = parseBr(prazo)?.toInt() ?: 0
-                        val key = nf.cnpjEmitente ?: sid
+                        val key = nf.docKey ?: sid
                         val chosen = included.filter { it.itemId != null }
                         val entries = chosen.mapNotNull { r ->
                             val q = parseBr(r.qty) ?: return@mapNotNull null
@@ -260,9 +268,10 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
                             val uc = unitCost(r) ?: return@mapNotNull null
                             PriceEntry(
                                 id = newId(), itemId = r.itemId!!, supplierId = sid, date = date,
-                                unitPrice = t / q, effectiveCost = uc, qty = q,
-                                source = Source.NF, prazoDias = pz,
-                                note = nf.numero?.let { "NF $it" } ?: "NF",
+                                unitPrice = t / q, effectiveCost = uc,
+                                qty = if (nf.isQuote) 0.0 else q, // orçamento não é compra: não entra no estoque
+                                source = if (nf.isQuote) Source.COTACAO else Source.NF, prazoDias = pz,
+                                note = nf.numero?.let { "$docLabel $it" } ?: docLabel,
                             )
                         }
                         val updated = chosen.mapNotNull { r ->
@@ -273,11 +282,16 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
                         store.upsertItems(updated)
                         // Guarda o CNPJ no fornecedor para reconhecê-lo sozinho na próxima nota
                         val sup = store.supplier(sid)
-                        if (sup != null && sup.cnpj.isBlank() && nf.cnpjEmitente != null) {
-                            store.upsertSupplier(sup.copy(cnpj = nf.cnpjEmitente))
+                        if (sup != null) {
+                            var s2 = sup
+                            if (sup.cnpj.isBlank() && nf.cnpjEmitente != null) s2 = s2.copy(cnpj = nf.cnpjEmitente)
+                            if (nf.cnpjEmitente == null && nf.docKey != null && nf.docKey !in sup.docKeys) {
+                                s2 = s2.copy(docKeys = sup.docKeys + nf.docKey)
+                            }
+                            if (s2 != sup) store.upsertSupplier(s2)
                         }
                         store.addPrices(entries)
-                        Toast.makeText(ctx, "${entries.size} itens da nota salvos", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "${entries.size} preços salvos" + if (nf.isQuote) " como cotação" else " da nota", Toast.LENGTH_SHORT).show()
                         nav.pop()
                     },
                     modifier = Modifier
@@ -299,13 +313,22 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Emissão ${nf.data?.let { dateFmt(it) } ?: "?"} · CNPJ emitente ${nf.cnpjEmitente ?: "não encontrado"} · ${rows.size} itens lidos",
+                        "Emissão ${nf.data?.let { dateFmt(it) } ?: "?"} · " +
+                            (if (nf.cnpjEmitente != null) "CNPJ ${nf.cnpjEmitente}" else "sem CNPJ") +
+                            (nf.prazo?.let { " · prazo lido: $it dias" } ?: "") + " · ${rows.size} itens lidos",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    if (nf.isQuote) {
+                        Text(
+                            "Orçamento do fornecedor: os preços entram como cotação (comparação e histórico), não como compra no estoque.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     if (already) Text("⚠ Esta nota parece já ter sido importada.", color = Up, fontWeight = FontWeight.Bold)
                     SupplierPicker(store, supplierId, newCnpj = nf.cnpjEmitente ?: "", onSelect = { sid ->
                         supplierId = sid
-                        prazo = (store.supplier(sid)?.prazoPadrao ?: 28).toString()
+                        prazo = (nf.prazo ?: store.supplier(sid)?.prazoPadrao ?: 28).toString()
                     })
                     Row {
                         NumField("Prazo (dias)", prazo, { prazo = it }, Modifier.weight(1f))

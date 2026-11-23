@@ -188,10 +188,10 @@ fun EntradaScreen(nav: Nav) {
     ) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
-                Text("Nota fiscal (PDF da DANFE)", style = MaterialTheme.typography.titleMedium)
+                Text("PDF: nota fiscal ou orçamento", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Lê os itens, quantidades, valores e IPI da nota e grava o histórico de preços. " +
+                    "DANFE vira compra (histórico + estoque). Orçamento/pedido do fornecedor vira cotação para comparar. " +
                         "Dica: no WhatsApp ou no e-mail, toque no PDF → Compartilhar → Compras LOES.",
                     style = MaterialTheme.typography.bodyMedium,
                 )

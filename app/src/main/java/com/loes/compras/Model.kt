@@ -12,6 +12,8 @@ data class Supplier(
     val phone: String = "",
     val cnpj: String = "",
     val prazoPadrao: Int = 28,
+    /** Assinaturas de documentos sem CNPJ (ex.: orçamentos) já ligadas a este fornecedor. */
+    val docKeys: List<String> = emptyList(),
 )
 
 data class Item(
@@ -69,6 +71,7 @@ private fun JSONObject.optLongOrNull(key: String): Long? = if (isNull(key)) null
 
 fun Supplier.toJson(): JSONObject = JSONObject()
     .put("id", id).put("name", name).put("phone", phone).put("cnpj", cnpj).put("prazoPadrao", prazoPadrao)
+    .put("docKeys", docKeys.toJsonArray())
 
 fun supplierFromJson(o: JSONObject) = Supplier(
     id = o.getString("id"),
@@ -76,6 +79,7 @@ fun supplierFromJson(o: JSONObject) = Supplier(
     phone = o.optString("phone"),
     cnpj = o.optString("cnpj"),
     prazoPadrao = o.optInt("prazoPadrao", 28),
+    docKeys = o.optJSONArray("docKeys").strings(),
 )
 
 fun Item.toJson(): JSONObject = JSONObject()
