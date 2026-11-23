@@ -22,6 +22,12 @@ App Android, offline e de uso pessoal, para otimizar as compras da LOES Material
 
 **Backup**: Mais → Exportar/Importar (arquivo JSON). Todos os dados ficam só no celular.
 
+## Baixar o APK
+
+**https://github.com/LucasSotheLoes/Compras/releases/latest/download/ComprasLoes.apk**
+
+Abra esse link no celular e instale. A cada push na `main`, o GitHub gera um APK novo e atualiza esse link.
+
 ## Como gerar o APK
 
 ### Opção A: GitHub (sem instalar nada)
