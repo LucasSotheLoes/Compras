@@ -30,6 +30,8 @@ data class Item(
     val lastCountDate: Long? = null,
     /** Quantidade colocada à mão na lista de compras (0 = não está na lista). */
     val wanted: Double = 0.0,
+    /** Quando você marcou "pedi" na lista de compras. */
+    val orderedAt: Long? = null,
 )
 
 enum class Source { NF, COTACAO }
@@ -48,6 +50,8 @@ data class PriceEntry(
     val source: Source,
     val prazoDias: Int,
     val note: String = "",
+    /** Quando o preço foi lançado no app (a data do documento fica em [date]). */
+    val createdAt: Long = System.currentTimeMillis(),
 )
 
 data class Settings(
@@ -91,6 +95,7 @@ fun Item.toJson(): JSONObject = JSONObject()
     .put("lastCount", lastCount ?: JSONObject.NULL)
     .put("lastCountDate", lastCountDate ?: JSONObject.NULL)
     .put("wanted", wanted)
+    .put("orderedAt", orderedAt ?: JSONObject.NULL)
 
 fun itemFromJson(o: JSONObject) = Item(
     id = o.getString("id"),
@@ -103,12 +108,13 @@ fun itemFromJson(o: JSONObject) = Item(
     lastCount = o.optDoubleOrNull("lastCount"),
     lastCountDate = o.optLongOrNull("lastCountDate"),
     wanted = o.optDouble("wanted", 0.0),
+    orderedAt = o.optLongOrNull("orderedAt"),
 )
 
 fun PriceEntry.toJson(): JSONObject = JSONObject()
     .put("id", id).put("itemId", itemId).put("supplierId", supplierId).put("date", date)
     .put("unitPrice", unitPrice).put("effectiveCost", effectiveCost).put("qty", qty)
-    .put("source", source.name).put("prazoDias", prazoDias).put("note", note)
+    .put("source", source.name).put("prazoDias", prazoDias).put("note", note).put("createdAt", createdAt)
 
 fun priceFromJson(o: JSONObject) = PriceEntry(
     id = o.getString("id"),
@@ -121,6 +127,7 @@ fun priceFromJson(o: JSONObject) = PriceEntry(
     source = runCatching { Source.valueOf(o.optString("source")) }.getOrDefault(Source.COTACAO),
     prazoDias = o.optInt("prazoDias", 0),
     note = o.optString("note"),
+    createdAt = o.optLong("createdAt", o.optLong("date")),
 )
 
 fun Settings.toJson(): JSONObject = JSONObject()

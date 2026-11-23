@@ -269,7 +269,7 @@ fun NfImportScreen(store: Store, nav: Nav, uri: Uri) {
                             PriceEntry(
                                 id = newId(), itemId = r.itemId!!, supplierId = sid, date = date,
                                 unitPrice = t / q, effectiveCost = uc,
-                                qty = if (nf.isQuote) 0.0 else q, // orçamento não é compra: não entra no estoque
+                                qty = q, // em orçamento é a quantidade orçada (estoque só usa NF)
                                 source = if (nf.isQuote) Source.COTACAO else Source.NF, prazoDias = pz,
                                 note = nf.numero?.let { "$docLabel $it" } ?: docLabel,
                             )

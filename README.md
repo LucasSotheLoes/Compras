@@ -16,6 +16,11 @@ App Android, offline e de uso pessoal, para otimizar as compras da LOES Material
 
 **Histórico de preços**: gráfico do custo real ao longo do tempo e o último preço de cada fornecedor, por item.
 
+**Lista de compras** (aba Repor → Lista de compras)
+- Todo item orçado no dia (PDF de orçamento ou cotação do WhatsApp) entra sozinho, com a quantidade orçada, agrupado pelo fornecedor mais barato e mostrando o 2º colocado e a diferença em %.
+- Marque ✓ no que já pediu e o item sai da lista. Ele volta se chegar um orçamento novo dele. "Já pedidos" fica embaixo, para desfazer.
+- Filtro: orçados hoje / 2 dias / 7 dias. Também dá pra adicionar itens à mão, e os itens com estoque no mínimo entram junto.
+
 **Reposição** (aba Repor)
 - *Contagem*: digite só o que contou na prateleira e ajuste o estoque mínimo ali mesmo.
 - *Pedido sugerido*: o estoque estimado é a última contagem + as entradas por NF depois dela − o consumo médio, que é calculado pelos intervalos entre as compras. Quando o estoque estimado chega no mínimo, o item entra no pedido, agrupado pelo fornecedor mais barato, e um botão manda o pedido pronto no WhatsApp do vendedor.
