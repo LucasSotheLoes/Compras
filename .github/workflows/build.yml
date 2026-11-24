@@ -19,19 +19,29 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Preparar assinatura
         env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          # Aceita um segredo único "senha:base64" com qualquer um dos dois nomes,
+          # ou os dois segredos separados (KEYSTORE_B64 + KEYSTORE_PASSWORD).
+          S1: ${{ secrets.KEYSTORE_B64 }}
+          S2: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          echo "KEYSTORE_B64: ${#KEYSTORE_B64} caracteres | KEYSTORE_PASSWORD: ${#KEYSTORE_PASSWORD} caracteres"
-          if [ -z "$KEYSTORE_B64" ]; then echo "::error::Falta o segredo KEYSTORE_B64"; exit 1; fi
-          if [ -z "$KEYSTORE_PASSWORD" ]; then echo "::error::Falta o segredo KEYSTORE_PASSWORD (confira o nome exato)"; exit 1; fi
-          echo "$KEYSTORE_B64" | tr -d ' \r\n' | base64 -d > "$RUNNER_TEMP/assinatura.jks" || { echo "::error::KEYSTORE_B64 não é um base64 válido (copie o arquivo inteiro)"; exit 1; }
-          keytool -list -keystore "$RUNNER_TEMP/assinatura.jks" -storepass "$KEYSTORE_PASSWORD" -alias compras > /dev/null \
-            || { echo "::error::A senha KEYSTORE_PASSWORD não abre a chave (confira se colou sem espaços)"; exit 1; }
+          B64=""; PASS=""
+          for S in "$S1" "$S2"; do
+            S=$(printf '%s' "$S" | tr -d ' \r\n')
+            [ -z "$S" ] && continue
+            if [ "${S#*:}" != "$S" ]; then PASS="${S%%:*}"; B64="${S#*:}"
+            elif [ ${#S} -gt 200 ]; then B64="$S"
+            else PASS="$S"; fi
+          done
+          echo "chave: ${#B64} caracteres | senha: ${#PASS} caracteres"
+          if [ -z "$B64" ]; then echo "::error::Não achei a chave: cole o conteúdo de SEGREDO_UNICO.txt no segredo KEYSTORE_B64"; exit 1; fi
+          if [ -z "$PASS" ]; then echo "::error::Não achei a senha: cole o conteúdo de SEGREDO_UNICO.txt no segredo KEYSTORE_B64"; exit 1; fi
+          printf '%s' "$B64" | base64 -d > "$RUNNER_TEMP/assinatura.jks" || { echo "::error::Chave em base64 inválida (copie o arquivo inteiro)"; exit 1; }
+          keytool -list -keystore "$RUNNER_TEMP/assinatura.jks" -storepass "$PASS" -alias compras > /dev/null \
+            || { echo "::error::A senha não abre a chave"; exit 1; }
+          echo "::add-mask::$PASS"
           echo "KEYSTORE_FILE=$RUNNER_TEMP/assinatura.jks" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
       - name: Compilar
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace --no-daemon
